@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from pathlib import Path
 
 WEIGHTS_PATH = str(Path(__file__).resolve().parent.parent / "dinov3-weights" / "dinov3_vits16.pth")
 

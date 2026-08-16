@@ -16,7 +16,7 @@ from code.dataset import (
     RESOLUTION_WEIGHTS,
 )
 
-scene_dir = Path("/home/khadeeja/ml-hypersim/evermotion_dataset/scenes/ai_001_001")
+scene_dir = Path.home() / "ml-hypersim" / "evermotion_dataset" / "scenes" / "ai_001_001"
 frame = load_hypersim_frame(scene_dir, frame_idx=0)
 depth_mm = frame['depth_mm']
 valid_mask = frame['valid_mask']
@@ -43,7 +43,7 @@ for i, ax in enumerate(axes.flat):
     ax.axis('off')
 plt.suptitle('Sensor FOV (60°) in RGB FOV (90°) + Random Position')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_fov_jitter.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_fov_jitter.png"), dpi=150)
 print("  Saved: test_out/aug_fov_jitter.png")
 
 # Test 2: Sparsity levels
@@ -61,7 +61,7 @@ for i, level in enumerate(["low", "medium", "high"]):
     axes[i].axis('off')
 plt.suptitle('Sparsity Levels')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_sparsity_levels.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_sparsity_levels.png"), dpi=150)
 print("  Saved: test_out/aug_sparsity_levels.png")
 
 # Test 3: Edge falloff
@@ -79,7 +79,7 @@ for i, falloff in enumerate([0.0, 0.2, 0.4]):
     axes[i].axis('off')
 plt.suptitle('Edge Falloff')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_edge_falloff.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_edge_falloff.png"), dpi=150)
 print("  Saved: test_out/aug_edge_falloff.png")
 
 # Test 4: Depth-dependent sparsity
@@ -99,7 +99,7 @@ for i, scale in enumerate([0.0, 0.3, 0.6]):
     axes[i].axis('off')
 plt.suptitle('Depth-Dependent Sparsity')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_depth_sparsity.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_depth_sparsity.png"), dpi=150)
 print("  Saved: test_out/aug_depth_sparsity.png")
 
 # Test 5: Combined all effects
@@ -119,7 +119,7 @@ for i, ax in enumerate(axes.flat):
     ax.axis('off')
 plt.suptitle('All Effects Combined')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_combined.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_combined.png"), dpi=150)
 print("  Saved: test_out/aug_combined.png")
 
 # Test 6: Multi-resolution sampling
@@ -174,7 +174,7 @@ axes[1, 2].axis('off')
 
 plt.suptitle(f'Full Sample: {sample["rgb"].shape[1]}x{sample["rgb"].shape[2]}')
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/aug_full_pipeline.png', dpi=150)
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "aug_full_pipeline.png"), dpi=150)
 print("  Saved: test_out/aug_full_pipeline.png")
 
 print("\n" + "=" * 60)
