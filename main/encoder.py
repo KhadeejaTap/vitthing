@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-WEIGHTS_PATH = "/home/khadeeja/vitthing/dinov3-weights/dinov3_vits16.pth"
+WEIGHTS_PATH = str(Path(__file__).resolve().parent.parent / "dinov3-weights" / "dinov3_vits16.pth")
 
 # Global cache for shared_random init (reversible, no persistent state)
 _SHARED_RANDOM_STATE = None

@@ -515,7 +515,7 @@ def main():
         print("="*60)
 
         # Use preprocessed dataset for overfitting
-        data_dir = args.data_dir if args.data_dir else "/home/khadeeja/vitthing/hypersim_data"
+        data_dir = args.data_dir if args.data_dir else str(Path(__file__).resolve().parent.parent / "hypersim_data")
         full_dataset = PreprocessedHypersimDataset(
             data_dir=data_dir,
             stage=args.resume_stage if args.resume_stage > 0 else 1,  # Default to stage 1 if not resuming
@@ -570,7 +570,7 @@ def main():
             continue
 
         # Use preprocessed dataset
-        data_dir = args.data_dir if args.data_dir else "/home/khadeeja/vitthing/hypersim_data"
+        data_dir = args.data_dir if args.data_dir else str(Path(__file__).resolve().parent.parent / "hypersim_data")
         train_ds = PreprocessedHypersimDataset(
             data_dir=data_dir,
             stage=stage["dataset_stage"],

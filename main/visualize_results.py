@@ -49,6 +49,8 @@ def visualize_one(npz_path: Path, out_dir: Path):
 
     # 1) RGB
     if rgb is not None:
+        print(rgb.dtype)
+        print(rgb.min(), rgb.max(), rgb.mean())
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.imshow(np.clip(rgb, 0, 1))
         shift_str = f"[{sensor_shift[0]}, {sensor_shift[1]}]" if sensor_shift is not None else "None"

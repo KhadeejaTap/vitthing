@@ -122,7 +122,7 @@ class PreprocessedHypersimDataset(Dataset):
 
 if __name__ == "__main__":
     # Quick test
-    ds = PreprocessedHypersimDataset("/home/khadeeja/vitthing/hypersim_data", stage=1, split="train")
+    ds = PreprocessedHypersimDataset(str(Path(__file__).resolve().parent.parent / "hypersim_data"), stage=1, split="train")
     print(f"Dataset length: {len(ds)}")
 
     sample = ds[0]

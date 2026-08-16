@@ -126,6 +126,7 @@ def downsample_and_crop(image, scale, crop_top, crop_left, crop_h, crop_w, inter
     h, w = image.shape[:2]
     new_h, new_w = int(round(h * scale)), int(round(w * scale))
     resized = cv2.resize(image, (new_w, new_h), interpolation=interp)
+    print(f"[DEBUG] After downsampling (before crop): resized shape: {resized.shape}")
     cropped = resized[crop_top:crop_top + crop_h, crop_left:crop_left + crop_w]
     return cropped
 
@@ -165,18 +166,64 @@ def process_and_save(samples, split, out_root, stage, rng):
         color_key = loaded["color_keys"][0]
         depth_key = loaded["depth_keys"][0]
 
-        rgb = loaded["color_data"][color_key].astype(np.float32)  # (H, W, 3) in [0,1]
+        rgb = loaded["color_data"][color_key].astype(np.float32)  # (H, W, 3) raw HDF5 values
 
-        # Get euclidean distance and convert to z-depth BEFORE downsampling
-        euclidean_distance = loaded["euclidean_distance"]
+        # GET RENDER ENTITY ID FOR TONEMAPPING
+        if "render_entity_id" in loaded["color_data"]:
+            render_entity_id = loaded["color_data"]["render_entity_id"].astype(np.int32)
+        else:
+            # Fallback: if not available, use all pixels as valid
+            render_entity_id = np.ones(rgb.shape[:2], dtype=np.int32)  # All valid (shape H,W)
+
+        # APPLY TONEMAPPING
+        gamma = 1.0 / 2.2   # standard gamma correction exponent
+        inv_gamma = 1.0 / gamma
+        percentile = 90        # we want this percentile brightness value in the unmodified image...
+        brightness_nth_percentile_desired = 0.8       # ...to be this bright after scaling
+
+        valid_mask = render_entity_id != -1
+
+        if np.count_nonzero(valid_mask) == 0:
+            scale = 1.0 # if there are no valid pixels, then set scale to 1.0
+        else:
+            brightness = 0.3*rgb[:,:,0] + 0.59*rgb[:,:,1] + 0.11*rgb[:,:,2] # "CCIR601 YIQ" method for computing brightness
+            brightness_valid = brightness[valid_mask]
+
+            eps = 0.0001 # if the nth percentile brightness value in the unmodified image is less than this, set the scale to 0.0 to avoid divide-by-zero
+            brightness_nth_percentile_current = np.percentile(brightness_valid, percentile)
+
+            if brightness_nth_percentile_current < eps:
+                scale = 0.0
+            else:
+                # Snavely uses the following expression in the code at https://github.com/snavely/pbrs_tonemapper/blob/master/tonemap_rgbe.py:
+                # scale = np.exp(np.log(brightness_nth_percentile_desired)*inv_gamma - np.log(brightness_nth_percentile_current))
+                #
+                # Our expression below is equivalent, but is more intuitive, because it follows more directly from the expression:
+                # (scale*brightness_nth_percentile_current)^gamma = brightness_nth_percentile_desired
+                scale = np.power(brightness_nth_percentile_desired, inv_gamma) / brightness_nth_percentile_current
+
+        rgb = np.power(np.maximum(scale*rgb, 0), gamma)
+        # Clip to [0,1] to ensure valid range for model input
+        rgb_tonemapped = np.clip(rgb, 0.0, 1.0)
+
+
+        # Note: We will delete the original H5 file after all processing is complete
+
+        # PROCESS DEPTH (unchanged from original preprocessing)
+        gt_depth = loaded["depth_data"][depth_key].astype(np.float32)  # (H, W) planar z-depth in meters
+        euclidean_distance = loaded.get("euclidean_distance", None)
         if euclidean_distance is not None:
             gt_depth = distance_to_depth(euclidean_distance.astype(np.float32))  # meters
         else:
             gt_depth = loaded["depth_data"][depth_key].astype(np.float32)  # meters
 
-        # Downsample and crop
-        rgb_ds = downsample_and_crop(rgb, scale, crop_top, crop_left, crop_h, crop_w, cv2.INTER_AREA)
+        # Downsample and crop - COMPUTE SCALE PER SAMPLE BASED ON ACTUAL IMAGE DIMENSIONS
+        scale, crop_top, crop_left, crop_h, crop_w = compute_scale_and_crop(target_h, target_w,
+                                                                          rgb_tonemapped.shape[0],
+                                                                          rgb_tonemapped.shape[1])
+        rgb_ds = downsample_and_crop(rgb_tonemapped, scale, crop_top, crop_left, crop_h, crop_w, cv2.INTER_AREA)
         gt_ds = downsample_and_crop(gt_depth, scale, crop_top, crop_left, crop_h, crop_w, cv2.INTER_NEAREST)
+        print(f"[DEBUG] After downsample and crop: rgb_ds shape: {rgb_ds.shape}, gt_ds shape: {gt_ds.shape}")
 
         # Convert GT depth to mm
         gt_ds_mm = gt_ds * 1000.0
@@ -197,9 +244,10 @@ def process_and_save(samples, split, out_root, stage, rng):
         corner_density = 0.05  # 5% at corners
         edge_density = 0.10    # 10% at edges
 
-        # Compute normalized distance from center (0=center, 1=corners)
-        cy, cx = sensor_h / 2.0, sensor_w / 2.0
-        yy, xx = np.meshgrid(np.arange(sensor_h), np.arange(sensor_w), indexing='ij')
+        # Compute normalized distance from center (0=center, 1=corners) based on actual cropped sensor mask dimensions
+        sensor_h_actual, sensor_w_actual = sensor_mask.shape
+        cy, cx = sensor_h_actual / 2.0, sensor_w_actual / 2.0
+        yy, xx = np.meshgrid(np.arange(sensor_h_actual), np.arange(sensor_w_actual), indexing='ij')
         dist = np.sqrt((yy - cy)**2 + (xx - cx)**2)
         max_dist = np.sqrt(cy**2 + cx**2)
         norm_dist = dist / max_dist
@@ -259,12 +307,17 @@ def process_and_save(samples, split, out_root, stage, rng):
 
         # Save crop perimeter (in GT coordinates)
         crop_perimeter = np.array([y0, x0, sensor_h, sensor_w], dtype=np.int32)
+        # Prepare RGB for NPZ: transpose to (3, H, W) and apply ImageNet normalization
+        rgb_npz = np.transpose(rgb_ds, (2, 0, 1))  # (3, H, W)
+        imagenet_mean = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
+        imagenet_std = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+        rgb_npz = (rgb_npz - imagenet_mean) / imagenet_std
 
         # Save as NPZ (padded sensor depth/mask to match GT resolution)
         fname = f"{sample['scene']}_{sample['cam']}_frame{sample['frame']}.npz"
         np.savez_compressed(
             out_dir / fname,
-            rgb=rgb_ds.astype(np.float32),      # (H, W, 3) in [0,1]
+            rgb=rgb_npz.astype(np.float32),      # (3, H, W) ImageNet-normalized
             gt_depth=gt_ds_mm.astype(np.float32),  # (H, W) mm
             gt_mask=gt_mask.astype(np.bool_),   # (H, W) bool
             sensor_depth=sensor_depth_padded.astype(np.float32),  # (H, W) mm padded
@@ -280,8 +333,8 @@ def process_and_save(samples, split, out_root, stage, rng):
 
 
 def main():
-    scenes_root = "/home/khadeeja/ml-hypersim/evermotion_dataset/scenes"
-    out_root = Path("/home/khadeeja/vitthing/hypersim_data")
+    scenes_root = os.environ.get("HYPERSIM_ROOT", str(Path.home() / "ml-hypersim" / "evermotion_dataset" / "scenes"))
+    out_root = Path(__file__).resolve().parent.parent / "hypersim_data"
     val_fraction = 0.05
     seed = 42
     rng = np.random.default_rng(seed)
@@ -290,6 +343,12 @@ def main():
     all_samples = build_hypersim_index(scenes_root)
     print(f"Total frames: {len(all_samples)}")
     print(f"Total scenes: {len(set(s['scene'] for s in all_samples))}")
+
+    # Debug: Show first few samples
+    if len(all_samples) > 0:
+        print(f"First sample: {all_samples[0]}")
+        if len(all_samples) > 1:
+            print(f"Last sample: {all_samples[-1]}")
 
     train_samples, val_samples, n_val = split_by_frame(all_samples, val_fraction)
     print(f"\nTrain: {len(train_samples)} frames")
@@ -303,7 +362,9 @@ def main():
     # Process and save all stages
     for stage in [1, 2]:
         print(f"\n=== Stage {stage} ===")
+        print(f"Processing {len(stage_samples[stage - 1])} train samples")
         process_and_save(stage_samples[stage - 1], "train", out_root, stage, rng)
+        print(f"Processing {len(val_samples)} val samples")
         process_and_save(val_samples, "val", out_root, stage, rng)
 
     print(f"\nDone! Saved to {out_root}")

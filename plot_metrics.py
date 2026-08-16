@@ -6,7 +6,7 @@ import matplotlib.cm as cm
 import numpy as np
 
 # Read metrics
-df = pd.read_csv("/home/khadeeja/vitthing/test_out/metrics.csv")
+df = pd.read_csv(str(Path(__file__).resolve().parent.parent / "test_out" / "metrics.csv"))
 
 # Create figure with two subplots
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
@@ -36,5 +36,5 @@ ax2.legend(loc='upper right', fontsize=9)
 ax2.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('/home/khadeeja/vitthing/test_out/metrics_plot.png', dpi=150, bbox_inches='tight')
+plt.savefig(str(Path(__file__).resolve().parent.parent / "test_out" / "metrics_plot.png"), dpi=150, bbox_inches='tight')
 print("Saved plot to test_out/metrics_plot.png")

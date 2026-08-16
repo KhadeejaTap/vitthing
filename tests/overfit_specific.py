@@ -31,7 +31,7 @@ from losses import total_loss
 def parse_args():
     p = argparse.ArgumentParser(description="Overfit one specific NPZ sample for N iters")
     p.add_argument("--npz-path", type=str,
-                   default="/home/khadeeja/vitthing/hypersim_data/stage1/train/ai_001_001_scene_cam_00_frame0000.npz",
+                   default=str(Path(__file__).resolve().parent.parent / "hypersim_data" / "stage1" / "train" / "ai_001_001_scene_cam_00_frame0000.npz"),
                    help="Path to the specific NPZ file to overfit on")
     p.add_argument("--iters", type=int, default=500, help="Number of gradient steps")
     p.add_argument("--init", type=str, default="pretrained",

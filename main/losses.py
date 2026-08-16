@@ -343,7 +343,8 @@ def mask_bce_loss(mask_logit: torch.Tensor, mask_gt: torch.Tensor):
     Eq. 7: Binary cross-entropy for validity mask.
     Lm = -sum_i [m_i * log(m̃_i) + (1-m_i) * log(1-m̃_i)]
     """
-    return F.binary_cross_entropy_with_logits(mask_logit, mask_gt), {"lm": 0.0}
+    lm_loss = F.binary_cross_entropy_with_logits(mask_logit, mask_gt)
+    return lm_loss, {"lm": lm_loss.item()}
 
 
 def total_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
@@ -426,3 +427,24 @@ if __name__ == "__main__":
 
     assert not torch.isnan(loss), "NaN in total loss"
     print("PASSED: no NaN")
+
+def debug_visualize_pointcloud(gt_depth_np, gt_mask_np, fx, fy, cx, cy, out_path="pointcloud_check.html"):
+    """Debug: backproject one GT depth map, dump interactive point cloud for sanity check.
+    Not used in training loop — call manually from a test script."""
+    import numpy as np
+    import plotly.graph_objects as go
+
+    H, W = gt_depth_np.shape
+    ys, xs = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+    Z = gt_depth_np
+    X = (xs - cx) * Z / fx
+    Y = (ys - cy) * Z / fy
+    valid = gt_mask_np.astype(bool)
+
+    fig = go.Figure(data=[go.Scatter3d(
+        x=X[valid], y=Y[valid], z=Z[valid],
+        mode='markers', marker=dict(size=1, color=Z[valid], colorscale='Viridis')
+    )])
+    fig.update_layout(scene=dict(aspectmode='data'))
+    fig.write_html(out_path)
+    print(f"saved {out_path}")

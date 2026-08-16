@@ -36,7 +36,7 @@ from hypersim_dataset import HypersimDataset, build_hypersim_index, split_by_fra
 def parse_args():
     p = argparse.ArgumentParser(description="Overfit one sample for N iters")
     p.add_argument("--scenes-root", type=str,
-                   default="/home/khadeeja/ml-hypersim/evermotion_dataset/scenes")
+                   default=str(Path.home() / "ml-hypersim" / "evermotion_dataset" / "scenes"))
     p.add_argument("--sample-idx", type=int, default=0,
                    help="Index into the train split to overfit (default: 0)")
     p.add_argument("--stage", type=int, default=1, choices=[1, 2, 3, 4],
