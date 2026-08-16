@@ -11,15 +11,16 @@ from main.intrinsics import get_intrinsics
 from main.losses import total_loss
 from tests.v3_test import o
 from main.losses import debug_visualize_pointcloud
+from pathlib import Path
 
-NUM_ITERS = 500
+NUM_ITERS = 1000
 ENCODER_LR = 1e-5   # rolled back from 1e-3 -- that value diverged (see run log)
 DECODER_LR = 1e-4   # rolled back from 1e-2 -- that value diverged (see run log)
 GRAD_CLIP_MAX_NORM = 1.0
 
 # save a checkpoint prediction at these iterations so sharpness progression
 # can be inspected in one run instead of re-running from scratch each time
-CHECKPOINT_ITERS = [1, 50, 150, 300, 500]
+CHECKPOINT_ITERS = [1, 50, 150, 300, 500, 600, 700, 900, 1000]
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
