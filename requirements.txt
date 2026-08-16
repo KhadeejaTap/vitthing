@@ -2,3 +2,9 @@ torch
 numpy
 scipy
 pillow
+opencv-python
+h5py
+matplotlib
+pandas
+plotly
+torchvision
