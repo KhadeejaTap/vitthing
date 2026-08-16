@@ -32,11 +32,15 @@ def main():
     print("\n--- loading sample from hypersim_data ---")
     # Find first NPZ file in stage1/train
     npz_pattern = str(Path(__file__).resolve().parent.parent / "hypersim_data" / "stage1" / "train" / "*.npz")
+    print(f"Looking for NPZ files with pattern: {npz_pattern}")
     npz_files = sorted(glob.glob(npz_pattern))
+    print(f"Found {len(npz_files)} NPZ files in train")
     if not npz_files:
         # Fallback to val if no train files
         npz_pattern = str(Path(__file__).resolve().parent.parent / "hypersim_data" / "stage1" / "val" / "*.npz")
+        print(f"Looking for NPZ files with pattern: {npz_pattern}")
         npz_files = sorted(glob.glob(npz_pattern))
+        print(f"Found {len(npz_files)} NPZ files in val")
         if not npz_files:
             raise FileNotFoundError("No NPZ files found in stage1")
 
