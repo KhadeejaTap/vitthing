@@ -1,7 +1,0 @@
-The destination name is too long (276), reducing to 236
---2026-08-14 10:34:29--  https://dinov3.llamameta.net/dinov3_vits16plus/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth?Policy=eyJTdGF0ZW1lbnQiOlt7InVuaXF1ZV9oYXNoIjoiNGRxeW54OTV5dTkyeDhmcnhic3h3Nm9lIiwiUmVzb3VyY2UiOiJodHRwczpcL1wvZGlub3YzLmxsYW1hbWV0YS5uZXRcLyoiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3ODY4NDMyMzh9fX1dfQ__
-Resolving dinov3.llamameta.net (dinov3.llamameta.net)... 18.238.80.28, 18.238.80.4, 18.238.80.91, ...
-Connecting to dinov3.llamameta.net (dinov3.llamameta.net)|18.238.80.28|:443... connected.
-HTTP request sent, awaiting response... 403 Forbidden
-2026-08-14 10:34:30 ERROR 403: Forbidden.
-

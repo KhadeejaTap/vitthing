@@ -7,7 +7,7 @@ import matplotlib.cm as cm
 
 # Directories to visualize
 DIRS = [
-    "lowres_test",
+    "outputs",
 ]
 
 for base_dir in DIRS:

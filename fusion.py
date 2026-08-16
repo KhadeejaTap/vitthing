@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+# for dinov2, old
 class MaskedJointAttention(nn.Module):
     """
     reuses pretrained qkv/proj weights from both branches, unchanged.

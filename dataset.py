@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 
 from main.normalize import compute_log_params, build_input_tensor
-
+#synthetic data examples from my renders
 DEPTH_GLOB = "data/frame_*_depth_proj_mm.npy"
 MASK_TMPL = "data/frame_{idx}_proj_valid_mask.npy"
 RGB_TMPL = "data/frame_{idx}_rgb.png"  # adjust ext if not png
