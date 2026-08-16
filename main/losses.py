@@ -171,6 +171,7 @@ def global_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor
     bin_edges = DEPTH_BIN_EDGES.to(device)
 
     total_loss = 0.0
+    valid_batches = 0
     for b in range(B):
         # Valid indices for this batch element
         valid_idx = torch.where(valid_flat[b, :, 0])[0]
@@ -206,8 +207,9 @@ def global_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor
         batch_loss = _subsample_balanced(err, w, d, torch.ones_like(d, dtype=torch.bool),
                                          max_samples, bin_edges, near_bias=0.5)
         total_loss += batch_loss
+        valid_batches += 1
 
-    loss = total_loss / B
+    loss = total_loss / max(valid_batches, 1)
     return loss, {"lg": loss.item()}
 
 
@@ -253,7 +255,7 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
         ds = local_loss_downsample
         pred_depth = F.interpolate(pred_depth, size=(H // ds, W // ds), mode="nearest")
         gt_depth = F.interpolate(gt_depth, size=(H // ds, W // ds), mode="nearest")
-        gt_mask = F.interpolate(gt_mask, size=(H // ds, W // ds), mode="nearest")
+        gt_mask = F.interpolate(gt_mask.float(), size=(H // ds, W // ds), mode="nearest").bool()
         fx, fy, cx, cy = fx / ds, fy / ds, cx / ds, cy / ds
         H, W = H // ds, W // ds
 
@@ -267,8 +269,6 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
     # Generate anchor points using existing sampling logic
     # Sample anchors at pyramid level
     stride = 2 ** level
-    anchor_h = H // stride
-    anchor_w = W // stride
 
     # Create grid of anchor points
     ys = torch.arange(stride // 2, H, stride, device=device, dtype=torch.long)
@@ -343,7 +343,7 @@ def mask_bce_loss(mask_logit: torch.Tensor, mask_gt: torch.Tensor):
     Eq. 7: Binary cross-entropy for validity mask.
     Lm = -sum_i [m_i * log(m̃_i) + (1-m_i) * log(1-m̃_i)]
     """
-    lm_loss = F.binary_cross_entropy_with_logits(mask_logit, mask_gt)
+    lm_loss = F.binary_cross_entropy_with_logits(mask_logit, mask_gt.float())
     return lm_loss, {"lm": lm_loss.item()}
 
 

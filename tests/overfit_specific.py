@@ -21,8 +21,8 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from encoder import load_backbone, pad_to_multiple, crop_to_original
-from fusionv3 import DualBranchEncoder
+from main.encoder import load_backbone, pad_to_multiple, crop_to_original
+from main.fusionv3 import DualBranchEncoder
 from decoder import DPTDecoder, denormalize_depth
 from normalize import compute_log_params
 from losses import total_loss

@@ -1,17 +1,13 @@
 import torch
 import numpy as np
-import glob
-import os
+from pathlib import Path
 
 from main.encoder import load_backbone, crop_to_multiple, crop_to_original
 from main.fusionv3 import DualBranchEncoder
 from main.decoder import DPTDecoder, denormalize_depth
-from main.normalize import compute_log_params, build_input_tensor
-from main.intrinsics import get_intrinsics
+from main.normalize import compute_log_params
+from main.preprocessed_dataset import PreprocessedHypersimDataset
 from main.losses import total_loss
-from tests.v3_test import o
-from main.losses import debug_visualize_pointcloud
-from pathlib import Path
 
 NUM_ITERS = 1000
 ENCODER_LR = 1e-5   # rolled back from 1e-3 -- that value diverged (see run log)
@@ -29,85 +25,70 @@ def main():
     print("--- device ---")
     print(DEVICE)
 
-    print("\n--- loading sample from hypersim_data ---")
-    # Find first NPZ file in stage1/train
-    npz_pattern = str(Path(__file__).resolve().parent.parent / "hypersim_data" / "stage1" / "train" / "*.npz")
-    print(f"Looking for NPZ files with pattern: {npz_pattern}")
-    npz_files = sorted(glob.glob(npz_pattern))
-    print(f"Found {len(npz_files)} NPZ files in train")
-    if not npz_files:
-        # Fallback to val if no train files
-        npz_pattern = str(Path(__file__).resolve().parent.parent / "hypersim_data" / "stage1" / "val" / "*.npz")
-        print(f"Looking for NPZ files with pattern: {npz_pattern}")
-        npz_files = sorted(glob.glob(npz_pattern))
-        print(f"Found {len(npz_files)} NPZ files in val")
-        if not npz_files:
-            raise FileNotFoundError("No NPZ files found in stage1")
+    print("\n--- loading sample from preprocessed hypersim_data ---")
+    # Use PreprocessedHypersimDataset to load data
+    data_dir = str(Path(__file__).resolve().parent.parent / "hypersim_data")
+    dataset = PreprocessedHypersimDataset(data_dir=data_dir, stage=1, split="train")
 
-    npz_path = npz_files[0]
-    print(f"Loading sample: {npz_path}")
+    if len(dataset) == 0:
+        raise FileNotFoundError("No NPZ files found in stage1/train")
 
-    # Load NPZ data
-    with np.load(npz_path, allow_pickle=True) as data:
-        # Extract and convert fields
-        rgb_np = data['rgb'].astype(np.float32)  # Already (3, H, W) ImageNet-normalized
-        gt_depth_np = data['gt_depth'].astype(np.float32)  # (H, W) mm
-        gt_mask_np = data['gt_mask'].astype(np.float32)  # (H, W) bool as float
-        sensor_depth_np = data['sensor_depth'].astype(np.float32)  # (H, W) mm
-        sensor_mask_np = data['sensor_mask'].astype(np.float32)  # (H, W) bool
+    # Get the first sample
+    sample = dataset[0]
+    print(f"Loaded sample: {sample['scene']}/{sample['cam']}/frame.{sample['frame']}")
 
-    # Get dimensions - RGB is stored as (H, W, C) in NPZ
-    orig_h, orig_w, orig_c = rgb_np.shape
-    print(f"original resolution: {orig_h} x {orig_w} x {orig_c}")
-    print(f"rgb_np shape: {rgb_np.shape}")
+    # Extract data from sample (already formatted correctly by PreprocessedHypersimDataset)
+    rgb = sample["rgb"].unsqueeze(0).to(DEVICE)                    # (1, 3, H, W) [0,1]
+    depth_filled_mm = sample["depth_filled_mm"].unsqueeze(0).to(DEVICE)  # (1, 1, H, W) mm - flood-filled sensor depth
+    valid_mask = sample["valid_mask"].unsqueeze(0).to(DEVICE)      # (1, H, W) bool - sparse real measurements
+    gt_depth = sample["gt_depth"].unsqueeze(0).to(DEVICE)          # (1, 1, H, W) mm
+    gt_mask = sample["gt_mask"].unsqueeze(0).to(DEVICE)            # (1, 1, H, W) bool
+    fx = sample["fx"]
+    fy = sample["fy"]
+    cx = sample["cx"]
+    cy = sample["cy"]
 
-    # Compute log normalization parameters
+    print(f"rgb tensor shape: {rgb.shape}")
+    print(f"depth_filled_mm tensor shape: {depth_filled_mm.shape}")
+    print(f"valid_mask tensor shape: {valid_mask.shape}")
+    print(f"gt_depth tensor shape: {gt_depth.shape}")
+    print(f"gt_mask tensor shape: {gt_mask.shape}")
+    print(f"intrinsics: fx={fx:.2f} fy={fy:.2f} cx={cx:.2f} cy={cy:.2f}")
+
+    # Compute log normalization parameters (needed for building depth_input)
     alpha, beta = compute_log_params()
     print(f"alpha={alpha:.4f} beta={beta:.4f}")
 
-    # Create depth_input tensor (3, H, W) in [-1, 1] from sensor data
-    depth_input_np = build_input_tensor(sensor_depth_np, sensor_mask_np, alpha, beta)
-    print(f"depth_input_np shape before transpose: {depth_input_np.shape}")
-    # build_input_tensor returns (H, W, 3), need to transpose to (3, H, W) for model
-    if depth_input_np.shape[-1] == 3:  # (H, W, 3)
-        depth_input_np = np.transpose(depth_input_np, (2, 0, 1))  # -> (3, H, W)
-    print(f"depth_input_np shape after transpose: {depth_input_np.shape}")
+    # Build depth_input tensor for encoder: [zhat, zhat, valid_mask] -> [-1, 1]
+    # where zhat = (log(depth_mm) - beta) / alpha
+    depth_mm = depth_filled_mm.squeeze(1).clamp_min(1.0)  # (1, H, W)
+    print(f"depth_mm shape after squeeze: {depth_mm.shape}")
+    zhat = (torch.log(depth_mm) - beta) / alpha           # (1, H, W)
+    print(f"zhat shape: {zhat.shape}")
+    zhat = zhat.clamp(0.0, 1.0)                           # (1, H, W)
+    print(f"zhat shape after clamp: {zhat.shape}")
 
-    # Convert to tensors and add batch dimension
-    # RGB: convert from (H, W, C) to (C, H, W) then add batch dim
-    rgb = torch.from_numpy(rgb_np).permute(2, 0, 1).unsqueeze(0).to(DEVICE)  # (1, C, H, W)
-    depth_input = torch.from_numpy(depth_input_np).unsqueeze(0).to(DEVICE)  # (1, 3, H, W)
-    gt_depth = torch.from_numpy(gt_depth_np).unsqueeze(0).unsqueeze(0).to(DEVICE)  # (1, 1, H, W)
-    gt_mask = torch.from_numpy(gt_mask_np).unsqueeze(0).unsqueeze(0).to(DEVICE)  # (1, 1, H, W)
-    valid_mask = torch.from_numpy(gt_mask_np).unsqueeze(0).to(DEVICE)  # (1, H, W) - squeezed version for loss
-    print(f"rgb tensor shape: {rgb.shape}")
+    # Build 3-channel input tensor: [zhat, zhat, valid_mask] -> [-1, 1]
+    # valid_mask already has batch dimension [1, H, W] to match zhat
+    print(f"valid_mask shape: {valid_mask.shape}")
+    depth_input = torch.stack([zhat, zhat, valid_mask.float()], dim=1) * 2.0 - 1.0  # (1, 3, H, W)
     print(f"depth_input tensor shape: {depth_input.shape}")
-    print(f"gt_depth tensor shape: {gt_depth.shape}")
-    print(f"gt_mask tensor shape: {gt_mask.shape}")
-    print(f"valid_mask tensor shape: {valid_mask.shape}")
 
-    # Apply cropping to multiple of 16 (patch size)
+    # Apply cropping to multiple of 16 (patch size for DINOv3) - matching train_staged approach
     print(f"Before cropping - rgb shape: {rgb.shape}")
-    rgb = crop_to_multiple(rgb)
-    depth_input = crop_to_multiple(depth_input)
-    gt_depth = crop_to_multiple(gt_depth)
-    gt_mask = crop_to_multiple(gt_mask)
-    valid_mask = crop_to_multiple(valid_mask)
-    print(f"After cropping - rgb shape: {rgb.shape}")
+    rgb_cropped = crop_to_multiple(rgb)
+    depth_input_cropped = crop_to_multiple(depth_input)
+    gt_depth_cropped = crop_to_multiple(gt_depth)
+    gt_mask_cropped = crop_to_multiple(gt_mask)
+    print(f"After cropping - rgb shape: {rgb_cropped.shape}")
 
-    out_h, out_w = rgb.shape[-2], rgb.shape[-1]
+    out_h, out_w = rgb_cropped.shape[-2], rgb_cropped.shape[-1]
     h_patch, w_patch = out_h // 16, out_w // 16
     print(f"cropped resolution: {out_h} x {out_w}, patch grid: {h_patch} x {w_patch}")
 
     # Check for invalid dimensions
     if out_h <= 0 or out_w <= 0:
         raise ValueError(f"Invalid cropped dimensions: {out_h} x {out_w}. Both must be > 0.")
-
-    fx, fy, cx, cy = get_intrinsics(out_w, out_h)
-    print(f"intrinsics: fx={fx:.2f} fy={fy:.2f} cx={cx:.2f} cy={cy:.2f}")
-    #debug_visualize_pointcloud(gt_depth_np, gt_mask_np, fx, fy, cx, cy, out_path="pointcloud_check.html") maybe try again with flat wall
-    alpha, beta = compute_log_params()
-    print(f"alpha={alpha:.4f} beta={beta:.4f}")
 
     print("\n--- building model ---")
     model_rgb = load_backbone()
@@ -131,17 +112,19 @@ def main():
     for it in range(1, NUM_ITERS + 1):
         optimizer.zero_grad()
 
-        features = encoder(rgb, depth_input)
+        features = encoder(rgb_cropped, depth_input_cropped)
         depth_hat, mask_logit = decoder(features, h_patch, w_patch, out_h, out_w)
 
-        # inputs and GT are already cropped to multiple of 16; use directly for loss
+        # For loss computation, inputs and GT are already cropped to multiple of 16
         depth_hat_c = depth_hat
         mask_logit_c = mask_logit
+        gt_depth_c = gt_depth_cropped
+        gt_mask_c = gt_mask_cropped
 
         depth_pred_metric = denormalize_depth(depth_hat_c, alpha, beta)
 
         loss, parts = total_loss(
-            depth_pred_metric, gt_depth, gt_mask, mask_logit_c, gt_mask,
+            depth_pred_metric, gt_depth_c, gt_mask_c, mask_logit_c, gt_mask_c,
             fx, fy, cx, cy
         )
 
@@ -151,9 +134,9 @@ def main():
 
         if it == 1 or it % 10 == 0 or it == NUM_ITERS:
             with torch.no_grad():
-                valid = gt_mask.bool()
+                valid = gt_mask_c.bool()
                 if valid.any():
-                    abs_err = (depth_pred_metric - gt_depth).abs()[valid].mean().item()
+                    abs_err = (depth_pred_metric - gt_depth_c).abs()[valid].mean().item()
                 else:
                     abs_err = float("nan")
             print(
