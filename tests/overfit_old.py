@@ -25,16 +25,12 @@ def main():
     print("--- device ---")
     print(DEVICE)
 
-    print("\n--- loading sample from preprocessed hypersim_data ---")
-    # Use PreprocessedHypersimDataset to load data
+    print("\n--- loading sample ---")
     data_dir = str(Path(__file__).resolve().parent.parent / "hypersim_data")
-    dataset = PreprocessedHypersimDataset(data_dir=data_dir, stage=1, split="train")
-
-    if len(dataset) == 0:
+    ds = PreprocessedHypersimDataset(data_dir=data_dir, stage=1, split="train")
+    if len(ds) == 0:
         raise FileNotFoundError("No NPZ files found in stage1/train")
-
-    # Get the first sample
-    sample = dataset[0]
+    sample = ds.__getitem__(0)
     print(f"Loaded sample: {sample['scene']}/{sample['cam']}/frame.{sample['frame']}")
 
     # Extract data from sample (already formatted correctly by PreprocessedHypersimDataset)
