@@ -16,8 +16,8 @@ def load_backbone(pretrained=True, init_mode="pretrained"):
       - "shared_random": random but identical weights for RGB & depth branches
     """
     global _SHARED_RANDOM_STATE
-    model = torch.hub.load('facebookresearch/dinov3', 'dinov3_vits16', pretrained=False)
-
+    DINOV3_REPO = str(Path(__file__).resolve().parent.parent / "dinov3")
+    model = torch.hub.load(DINOV3_REPO, 'dinov3_vits16', pretrained=False, source='local')
     if init_mode == "pretrained":
         state_dict = torch.load(WEIGHTS_PATH, map_location="cpu")
         model.load_state_dict(state_dict, strict=True)
