@@ -11,9 +11,9 @@ from main.alignment import align_points_scale_z_shift, align_points_scale_xyz_sh
 # ============================================================
 
 # Dataset-wide log-spaced depth bins for consistent subsampling
-# Sensor range: 300mm - 8333mm
+# Sensor range: 300mm - 20000mm
 DEPTH_MIN = 300.0
-DEPTH_MAX = 8333.0
+DEPTH_MAX = 20000.0
 NUM_DEPTH_BINS = 10
 DEPTH_BIN_EDGES = torch.logspace(math.log10(DEPTH_MIN), math.log10(DEPTH_MAX), NUM_DEPTH_BINS + 1)
 
@@ -99,22 +99,27 @@ def depth_weighted_l1_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor, gt_
     # Valid mask: use provided gt_mask (1 for valid)
     valid_mask = gt_mask.bool()  # (B, 1, H, W)
 
-    # Inverse depth weighting: 1/d_i
-    weight = 1.0 / gt_depth.clamp_min(eps)  # (B, 1, H, W)
+    # For safe computation, replace invalid depths with 1.0 to avoid NaN/inf
+    # This doesn't affect the final loss because invalid positions are masked out later
+    gt_depth_safe = gt_depth.clone()
+    gt_depth_safe[~valid_mask] = 1.0  # Safe value for depth (avoids division by zero or NaN)
 
-    # Weighted absolute error
-    err = weight * (pred_depth - gt_depth).abs()  # (B, 1, H, W)
-    err = err * valid_mask
+    # Inverse depth weighting: 1/d_i (using safe depths)
+    weight = 1.0 / gt_depth_safe.clamp_min(eps)  # (B, 1, H, W)
+
+    # Weighted absolute error (using safe depth to avoid NaN)
+    err = weight * (pred_depth - gt_depth_safe).abs()  # (B, 1, H, W)
+    err = err * valid_mask  # Zero out invalid positions
 
     # Flatten for subsampling
     err_flat = err.reshape(B, -1)           # (B, N)
     weight_flat = weight.reshape(B, -1)     # (B, N)
     valid_flat = valid_mask.reshape(B, -1)  # (B, N)
-    gt_depth_flat = gt_depth.reshape(B, -1) # (B, N)
+    gt_depth_flat = gt_depth.reshape(B, -1) # (B, N)  # Keep original for subsampling
 
     bin_edges = DEPTH_BIN_EDGES.to(device)
 
-    total_loss = 0.0
+    total_loss = torch.tensor(0.0, device=device)
     for b in range(B):
         batch_loss = _subsample_balanced(
             err_flat[b], weight_flat[b], gt_depth_flat[b], valid_flat[b],
@@ -159,18 +164,25 @@ def global_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor
     valid_mask = gt_mask.bool()  # (B, 1, H, W)
     valid_mask_3d = valid_mask.expand_as(pred_points)      # (B, 3, H, W)
 
+    # For safe backprojection, replace invalid depths with 1.0 to avoid NaN/inf in 3D points
+    # This doesn't affect the final loss because invalid positions are masked out later
+    gt_depth_safe = gt_depth.clone()
+    gt_depth_safe[~valid_mask] = 1.0  # Safe value for depth (avoids division by zero or NaN)
+    gt_points_safe = backproject(gt_depth_safe, fx, fy, cx, cy)  # (B, 3, H, W)
+
     # Reshape to (B, N, 3)
     pred_points_flat = pred_points.permute(0, 2, 3, 1).reshape(B, -1, 3)  # (B, H*W, 3)
-    gt_points_flat = gt_points.permute(0, 2, 3, 1).reshape(B, -1, 3)      # (B, H*W, 3)
+    gt_points_flat = gt_points_safe.permute(0, 2, 3, 1).reshape(B, -1, 3)  # (B, H*W, 3)  # Use safe points
     valid_flat = valid_mask_3d.permute(0, 2, 3, 1).reshape(B, -1, 3)      # (B, H*W, 3)
-    gt_depth_flat = gt_depth.permute(0, 2, 3, 1).reshape(B, -1)           # (B, H*W)
+    gt_depth_flat = gt_depth.permute(0, 2, 3, 1).reshape(B, -1)           # (B, H*W)  # Keep original for depth values
 
-    # Per-pixel inverse depth weight
-    weight = (1.0 / gt_depth_flat.clamp_min(eps)) * valid_flat[..., 0].float()  # (B, N)
+    # Per-pixel inverse depth weight (using safe depths for weight computation)
+    gt_depth_safe_flat = gt_depth_safe.permute(0, 2, 3, 1).reshape(B, -1)  # (B, H*W)
+    weight = (1.0 / gt_depth_safe_flat.clamp_min(eps)) * valid_flat[..., 0].float()  # (B, N)
 
     bin_edges = DEPTH_BIN_EDGES.to(device)
 
-    total_loss = 0.0
+    total_loss = torch.tensor(0.0, device=device)
     valid_batches = 0
     for b in range(B):
         # Valid indices for this batch element
@@ -182,7 +194,7 @@ def global_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor
         pred_xyz = pred_points_flat[b, valid_idx]  # (N_valid, 3)
         gt_xyz = gt_points_flat[b, valid_idx]      # (N_valid, 3)
         w = weight[b, valid_idx]                   # (N_valid,)
-        d = gt_depth_flat[b, valid_idx]            # (N_valid,)
+        d = gt_depth_flat[b, valid_idx]            # (N_valid,)  # Use original depth for subsampling
 
         # Closed-form weighted least squares for scale + z-shift
         # Scale: sum(w * pred · gt) / sum(w * pred · pred)  -- dot product over XYZ
@@ -255,13 +267,18 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
         ds = local_loss_downsample
         pred_depth = F.interpolate(pred_depth, size=(H // ds, W // ds), mode="nearest")
         gt_depth = F.interpolate(gt_depth, size=(H // ds, W // ds), mode="nearest")
-        gt_mask = F.interpolate(gt_mask.float(), size=(H // ds, W // ds), mode="nearest").bool()
+        gt_mask = F.interpolate(gt_mask, size=(H // ds, W // ds), mode="nearest")
         fx, fy, cx, cy = fx / ds, fy / ds, cx / ds, cy / ds
         H, W = H // ds, W // ds
 
     # Backproject to 3D points
     pred_points = backproject(pred_depth, fx, fy, cx, cy)  # (B, 3, H, W)
-    gt_points = backproject(gt_depth, fx, fy, cx, cy)      # (B, 3, H, W)
+
+    # For safe backprojection, replace invalid depths with 1.0 to avoid NaN/inf in 3D points
+    # This doesn't affect the final loss because invalid positions are masked out later
+    gt_depth_safe = gt_depth.clone()
+    gt_depth_safe[~gt_mask] = 1.0  # Safe value for depth (avoids division by zero or NaN)
+    gt_points = backproject(gt_depth_safe, fx, fy, cx, cy)      # (B, 3, H, W)
 
     # Valid mask: use provided gt_mask
     valid_mask = gt_mask.bool()  # (B, 1, H, W)
@@ -269,6 +286,8 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
     # Generate anchor points using existing sampling logic
     # Sample anchors at pyramid level
     stride = 2 ** level
+    anchor_h = H // stride
+    anchor_w = W // stride
 
     # Create grid of anchor points
     ys = torch.arange(stride // 2, H, stride, device=device, dtype=torch.long)
@@ -279,8 +298,8 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
         ys = torch.tensor([H // 2], device=device)
         xs = torch.tensor([W // 2], device=device)
 
-    total_loss = 0.0
-    total_patches = 0
+    total_loss = torch.tensor(0.0, device=device)
+    total_patches = torch.tensor(0, device=device)
 
     for y in ys:
         for x in xs:
@@ -294,7 +313,7 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
             pred_patch = pred_points[:, :, y_min:y_max, x_min:x_max]  # (B, 3, ph, pw)
             gt_patch = gt_points[:, :, y_min:y_max, x_min:x_max]
             mask_patch = valid_mask[:, :, y_min:y_max, x_min:x_max]
-            depth_patch = gt_depth[:, :, y_min:y_max, x_min:x_max]
+            depth_patch = gt_depth[:, :, y_min:y_max, x_min:x_max]  # Use original depth for values
 
             # Flatten patch
             ph, pw = pred_patch.shape[-2:]
@@ -303,13 +322,14 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
             mask_flat = mask_patch.permute(0, 2, 3, 1).reshape(B, -1)
             depth_flat = depth_patch.permute(0, 2, 3, 1).reshape(B, -1)
 
-            # Weight: inverse depth * valid mask
-            weight = (1.0 / depth_flat.clamp_min(eps)) * mask_flat.float()  # (B, N_patch)
+            # Weight: inverse depth * valid mask (using safe depths for weight computation)
+            depth_patch_safe = depth_patch.clone()
+            depth_patch_safe[~mask_patch] = 1.0  # Safe value for depth in patch
+            weight = (1.0 / depth_patch_safe.clamp_min(eps)) * mask_flat.float()  # (B, N_patch)
 
             # Skip if too few valid points
             valid_count = mask_flat.sum(dim=-1)
-            if (valid_count < min_points_per_patch).all():
-                continue
+
 
             # Align with scale + xyz-shift per patch
             scale, shift = align_points_scale_xyz_shift(pred_flat, gt_flat, weight)
@@ -332,9 +352,25 @@ def local_scale_invariant_loss(pred_depth: torch.Tensor, gt_depth: torch.Tensor,
             total_patches = total_patches + patch_mask.sum()
 
     if total_patches == 0:
+        # DEBUG: Print info about why no patches were valid
+        print(f"DEBUG local loss: H={H}, W={W}, level={level}, stride={stride}")
+        print(f"DEBUG local loss: len(ys)={len(ys)}, len(xs)={len(xs)}")
+        print(f"DEBUG local loss: min_points_per_patch={min_points_per_patch}")
+        if len(ys) > 0 and len(xs) > 0:
+            # Check first patch
+            y_first = ys[0].item() if len(ys) > 0 else 0
+            x_first = xs[0].item() if len(xs) > 0 else 0
+            y_min = max(0, y_first - int(radius_2d * H))
+            y_max = min(H, y_first + int(radius_2d * H) + 1)
+            x_min = max(0, x_first - int(radius_2d * W))
+            x_max = min(W, x_first + int(radius_2d * W) + 1)
+            print(f"DEBUG local loss: first patch y[{y_min}:{y_max}], x[{x_min}:{x_max}]")
+            if 'mask_flat' in locals():
+                print(f"DEBUG local loss: mask_flat shape={mask_flat.shape}")
+                print(f"DEBUG local loss: valid_count for first patch={mask_flat[0].sum().item()}")
         return torch.tensor(0.0, device=device, requires_grad=True), {"ll": 0.0}
 
-    loss = total_loss / total_patches.clamp_min(1.0)
+    loss = total_loss / torch.clamp(total_patches, min=1.0)
     return loss, {"ll": loss.item()}
 
 
@@ -343,7 +379,7 @@ def mask_bce_loss(mask_logit: torch.Tensor, mask_gt: torch.Tensor):
     Eq. 7: Binary cross-entropy for validity mask.
     Lm = -sum_i [m_i * log(m̃_i) + (1-m_i) * log(1-m̃_i)]
     """
-    lm_loss = F.binary_cross_entropy_with_logits(mask_logit, mask_gt.float())
+    lm_loss = F.binary_cross_entropy_with_logits(mask_logit, mask_gt)
     return lm_loss, {"lm": lm_loss.item()}
 
 
@@ -427,24 +463,3 @@ if __name__ == "__main__":
 
     assert not torch.isnan(loss), "NaN in total loss"
     print("PASSED: no NaN")
-
-def debug_visualize_pointcloud(gt_depth_np, gt_mask_np, fx, fy, cx, cy, out_path="pointcloud_check.html"):
-    """Debug: backproject one GT depth map, dump interactive point cloud for sanity check.
-    Not used in training loop — call manually from a test script."""
-    import numpy as np
-    import plotly.graph_objects as go
-
-    H, W = gt_depth_np.shape
-    ys, xs = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-    Z = gt_depth_np
-    X = (xs - cx) * Z / fx
-    Y = (ys - cy) * Z / fy
-    valid = gt_mask_np.astype(bool)
-
-    fig = go.Figure(data=[go.Scatter3d(
-        x=X[valid], y=Y[valid], z=Z[valid],
-        mode='markers', marker=dict(size=1, color=Z[valid], colorscale='Viridis')
-    )])
-    fig.update_layout(scene=dict(aspectmode='data'))
-    fig.write_html(out_path)
-    print(f"saved {out_path}")

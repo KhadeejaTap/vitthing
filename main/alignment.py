@@ -325,6 +325,14 @@ def align_points_scale_xyz_shift(points_src: torch.Tensor, points_tgt: torch.Ten
     # Take anchors
     anchor_where_batch, anchor_where_n = torch.where(weight > 0)
 
+    # Handle case where there are no valid anchors to align
+    if anchor_where_batch.numel() == 0:
+        # Return identity transformation: scale=1, shift=0
+        device, dtype = points_src.device, points_src.dtype
+        scale = torch.ones(batch_size, device=device, dtype=dtype)
+        shift = torch.zeros(batch_size, 3, device=device, dtype=dtype)
+        return scale, shift
+
     with torch.no_grad():
         points_src_anchor = points_src[anchor_where_batch, anchor_where_n]          # (anchors, 3)
         points_tgt_anchor = points_tgt[anchor_where_batch, anchor_where_n]          # (anchors, 3)

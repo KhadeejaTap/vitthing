@@ -2,7 +2,7 @@ import numpy as np
 
 
 SENSOR_ZMIN = 300.0
-SENSOR_ZMAX = 8333.0
+SENSOR_ZMAX = 20000.0
 
 
 def compute_log_params(zmin=SENSOR_ZMIN, zmax=SENSOR_ZMAX):

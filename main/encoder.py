@@ -1,8 +1,8 @@
+from pathlib import Path
 import torch
 import torch.nn.functional as F
-from pathlib import Path
 
-WEIGHTS_PATH = str(Path(__file__).resolve().parent.parent / "dinov3-weights" / "dinov3_vits16.pth")
+WEIGHTS_PATH = "dinov3-weights/dinov3_vits16.pth"
 
 # Global cache for shared_random init (reversible, no persistent state)
 _SHARED_RANDOM_STATE = None
@@ -17,15 +17,15 @@ def load_backbone(pretrained=True, init_mode="pretrained"):
     """
     global _SHARED_RANDOM_STATE
     DINOV3_REPO = str(Path(__file__).resolve().parent.parent / "dinov3")
-    model = torch.hub.load(DINOV3_REPO, 'dinov3_vits16', pretrained=False, source='local')
+
     if init_mode == "pretrained":
-        state_dict = torch.load(WEIGHTS_PATH, map_location="cpu")
-        model.load_state_dict(state_dict, strict=True)
-    elif init_mode == "shared_random":
-        if _SHARED_RANDOM_STATE is None:
-            _SHARED_RANDOM_STATE = model.state_dict()
-        model.load_state_dict(_SHARED_RANDOM_STATE, strict=True)
-    # "random" does nothing - keeps torch.hub's random init
+        model = torch.hub.load(DINOV3_REPO, 'dinov3_vits16', source='local', weights=WEIGHTS_PATH)
+    else:
+        model = torch.hub.load(DINOV3_REPO, 'dinov3_vits16', source='local', weights=None)
+        if init_mode == "shared_random":
+            if _SHARED_RANDOM_STATE is None:
+                _SHARED_RANDOM_STATE = model.state_dict()
+            model.load_state_dict(_SHARED_RANDOM_STATE, strict=True)
 
     return model
 

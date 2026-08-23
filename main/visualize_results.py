@@ -49,10 +49,16 @@ def visualize_one(npz_path: Path, out_dir: Path):
 
     # 1) RGB
     if rgb is not None:
-        print(rgb.dtype)
-        print(rgb.min(), rgb.max(), rgb.mean())
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.imshow(np.clip(rgb, 0, 1))
+        # For visualization, normalize to [0,1] range to show relative brightness correctly
+        rgb_min = rgb.min()
+        rgb_max = rgb.max()
+        if rgb_max > rgb_min:
+            rgb_vis = (rgb - rgb_min) / (rgb_max - rgb_min)
+        else:
+            # Handle flat images
+            rgb_vis = np.zeros_like(rgb)
+        ax.imshow(np.clip(rgb_vis, 0, 1))
         shift_str = f"[{sensor_shift[0]}, {sensor_shift[1]}]" if sensor_shift is not None else "None"
         ax.set_title(f"{stem}\noption={sensor_option} shift={shift_str}")
         ax.axis("off")

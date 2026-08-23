@@ -87,13 +87,15 @@ class ResidualConvBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.norm1 = nn.GroupNorm(1, channels)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.norm2 = nn.GroupNorm(1, channels)
         self.act = nn.ReLU(inplace=True)
 
     def forward(self, x):
         residual = x
-        x = self.act(self.conv1(x))
-        x = self.conv2(x)
+        x = self.act(self.norm1(self.conv1(x)))
+        x = self.norm2(self.conv2(x))
         return self.act(x + residual)
 
 
@@ -113,7 +115,9 @@ class RefineStage(nn.Module):
             self.skip_proj = nn.Conv2d(out_ch, out_ch, kernel_size=1)
         self.upsample = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1)
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
+            nn.GroupNorm(1, out_ch),
+            nn.ReLU(inplace=True),
         )
         self.refine = ResidualConvBlock(out_ch)
 
@@ -157,10 +161,10 @@ class DPTDecoder(nn.Module):
         self.depth_head = nn.Conv2d(self.CHANNELS[4], 1, kernel_size=3, padding=1)
         self.mask_head = nn.Conv2d(self.CHANNELS[4], 1, kernel_size=3, padding=1)
 
-        # Initialize depth head to output reasonable D_hat for typical depth (~3000mm)
-        # D_hat = (log(D) - beta) / alpha ≈ (log(3000) - 5.7038) / 3.3242 ≈ 0.69
+        # Initialize depth head to output reasonable D_hat for typical depth (~3m in meters)
+        # D_hat = (log(3.0) - log(0.3)) / (log(20) - log(0.3)) ≈ 0.44
         nn.init.zeros_(self.depth_head.weight)
-        nn.init.constant_(self.depth_head.bias, 0.69)
+        nn.init.constant_(self.depth_head.bias, 0.44)
         # Initialize mask head to predict valid (positive logit)
         nn.init.zeros_(self.mask_head.weight)
         nn.init.constant_(self.mask_head.bias, 2.0)  # sigmoid(2) ≈ 0.88
@@ -190,6 +194,7 @@ class DPTDecoder(nn.Module):
         x = F.interpolate(x, size=(out_h, out_w), mode="bilinear", align_corners=False)
 
         depth_hat = self.depth_head(x)   # normalized depth D-hat, unconstrained range
+        depth_hat = torch.tanh(depth_hat)  # clamp to [-1, 1] to prevent exploding gradients
         mask_logit = self.mask_head(x)   # validity logit, sigmoid at loss time
         return depth_hat, mask_logit
 

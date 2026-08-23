@@ -9,10 +9,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-
 class PreprocessedHypersimDataset(Dataset):
     """
-    Loads preprocessed NPZ files from hypersim_data/stage{N}/{split}/
+    Loads preprocessed NPZ files from hypersim_data/ (flat structure)
 
     Each NPZ contains:
     - rgb: (H, W, 3) float32 [0,1]
@@ -29,26 +28,20 @@ class PreprocessedHypersimDataset(Dataset):
     - meta: [scene, cam, frame, stage]
     """
 
-    def __init__(self, data_dir: str, stage: int = 1, split: str = "train"):
+    def __init__(self, data_dir: str):
         """
         Args:
-            data_dir: Root directory containing stage{N}/{train,val}/
-            stage: Stage number (1, 2, 3)
-            split: "train" or "val"
+            data_dir: Root directory containing preprocessed NPZ files (flat structure)
         """
         self.data_dir = Path(data_dir)
-        self.stage = stage
-        self.split = split
 
-        stage_dir = self.data_dir / f"stage{stage}" / split
-        if not stage_dir.exists():
-            raise FileNotFoundError(f"Stage directory not found: {stage_dir}")
+        # Find all NPZ files directly in the data directory
+        self.files = sorted(glob.glob(str(self.data_dir / "*.npz")))
 
-        self.files = sorted(glob.glob(str(stage_dir / "*.npz")))
         if len(self.files) == 0:
-            raise FileNotFoundError(f"No NPZ files found in {stage_dir}")
+            raise FileNotFoundError(f"No NPZ files found in {self.data_dir}")
 
-        print(f"PreprocessedHypersimDataset: stage={stage}, split={split}, samples={len(self.files)}")
+        print(f"PreprocessedHypersimDataset: samples={len(self.files)}")
 
     def __len__(self):
         return len(self.files)
@@ -88,12 +81,13 @@ class PreprocessedHypersimDataset(Dataset):
         # Intrinsics for this stage (precomputed)
         # Stage 1: 144x256, Stage 2: 288x512
         # Hypersim focal = 886.81, scale = 1/8 for stage 1, 1/5 for stage 2
-        if self.stage == 1:
+        stage = meta[3]  # stage from metadata
+        if stage == 1:
             scale = 1.0 / 8.0
-        elif self.stage == 2:
+        elif stage == 2:
             scale = 1.0 / 5.0
         else:
-            scale = 1.0 / 4.0
+            scale = 1.0 / 4.0  # fallback
 
         focal = 886.81 * scale
         H, W = rgb.shape[:2]
@@ -122,10 +116,10 @@ class PreprocessedHypersimDataset(Dataset):
 
 if __name__ == "__main__":
     # Quick test
-    ds = PreprocessedHypersimDataset(str(Path(__file__).resolve().parent.parent / "hypersim_data"), stage=1, split="train")
+    ds = PreprocessedHypersimDataset("../hypersim_data")
     print(f"Dataset length: {len(ds)}")
 
-    sample = ds[0]
+    sample = ds[55]
     for k, v in sample.items():
         if torch.is_tensor(v):
             print(f"  {k}: {v.shape} {v.dtype} [{v.min():.4f}, {v.max():.4f}]")

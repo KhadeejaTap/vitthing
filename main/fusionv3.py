@@ -119,6 +119,7 @@ class MaskedJointAttention(nn.Module):
         mask[N_img:, :N_img] = float("-inf")  # depth queries blocked from image keys
 
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        out = torch.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
         out = out.permute(0, 2, 1, 3).reshape(B, N_total, C)
 
         out_img = self.img_proj(out[:, :N_img, :])
@@ -150,13 +151,29 @@ class DualBranchFusionBlock(nn.Module):
         img_normed = self.rgb_block.norm1(x_img)
         depth_normed = self.depth_block.norm1(x_depth)
 
+        if torch.isnan(img_normed).any():
+            print("NaN in img_normed before attn")
+        if torch.isnan(depth_normed).any():
+            print("NaN in depth_normed before attn")
+
         attn_img, attn_depth = self.joint_attn(img_normed, depth_normed, rope_img, rope_depth)
+
+        if torch.isnan(attn_img).any():
+            print("NaN in attn_img after joint_attn")
+        if torch.isnan(attn_depth).any():
+            print("NaN in attn_depth after joint_attn")
 
         x_img = x_img + self.rgb_block.ls1(attn_img)
         x_depth = x_depth + self.depth_block.ls1(attn_depth)
 
+        if torch.isnan(x_img).any():
+            print("NaN in x_img after ls1")
+
         x_img = x_img + self.rgb_block.ls2(self.rgb_block.mlp(self.rgb_block.norm2(x_img)))
         x_depth = x_depth + self.depth_block.ls2(self.depth_block.mlp(self.depth_block.norm2(x_depth)))
+
+        if torch.isnan(x_img).any():
+            print("NaN in x_img after mlp")
 
         return x_img, x_depth
 
@@ -202,7 +219,11 @@ class DualBranchEncoder(nn.Module):
         # RoPE. H, W here are patch-grid dimensions (e.g. 14x14 for a 224px
         # input at patch16), not pixel dimensions.
         x_img, (H_img, W_img) = self.model_rgb.prepare_tokens_with_masks(rgb)
+        if torch.isnan(x_img).any():
+            print("NaN in x_img after prepare_tokens")
         x_depth, (H_depth, W_depth) = self.model_depth.prepare_tokens_with_masks(depth_input)
+        if torch.isnan(x_depth).any():
+            print("NaN in x_depth after prepare_tokens")
 
         # DINOv3 CHANGE: compute each branch's RoPE (sin, cos) once, up
         # front. Unlike the reference dinov3 implementation (which recomputes
@@ -218,6 +239,8 @@ class DualBranchEncoder(nn.Module):
         features = {}
         for i, block in enumerate(self.fusion_blocks, start=1):
             x_img, x_depth = block(x_img, x_depth, rope_img, rope_depth)
+            if torch.isnan(x_img).any():
+                print(f"NaN in x_img after fusion block {i}")
             if i in self.extract_layers:
                 features[i] = (x_img.clone(), x_depth.clone())
 

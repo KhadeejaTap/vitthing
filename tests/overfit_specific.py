@@ -72,10 +72,10 @@ def _depth_to_color(d, vmin, vmax):
     return (_TURBO(d)[..., :3] * 255).astype(np.uint8)
 
 
-def save_viz(path, rgb, depth_input, depth_pred, gt_depth, sensor_mask, gt_mask,
+def save_viz(path, rgb, depth_input, depth_pred, gt_depth, sensor_mask, gt_mask, mask_logit,
              alpha, beta, loss_val, it):
     """
-    Save a 5-panel visualization: RGB | GT depth | Pred depth | Sensor input | |Pred-GT| error.
+    Save a 6-panel visualization: RGB | GT depth | Pred depth | Sensor input | Pred Mask | |Pred-GT| error.
     All depth maps share the same color scale (computed from GT) for direct comparison.
     """
     # Squeeze batch + channel dims -> (H,W)
@@ -109,19 +109,24 @@ def save_viz(path, rgb, depth_input, depth_pred, gt_depth, sensor_mask, gt_mask,
     err_img = torch.where(gt_valid, err, torch.zeros_like(err))
     err_max = float(err_img.max().item()) if err_img.max() > 0 else 1.0
 
-    fig, axes = plt.subplots(1, 5, figsize=(22, 5))
+    fig, axes = plt.subplots(1, 6, figsize=(26, 5))
     panels = [
         ("RGB", rgb_img.clip(0, 1), None),
         ("GT depth (mm)", _depth_to_color(gt, vmin, vmax), None),
         ("Pred depth (mm)", _depth_to_color(pred, vmin, vmax), None),
         ("Sensor input (yellow=real)", sensor_color, None),
+        ("Pred Mask (prob)", torch.sigmoid(mask_logit)[0, 0].detach().cpu().numpy(), None),
         ("|Pred - GT| (mm)", err_img.numpy(), "magma"),
     ]
     for ax, (title, img, cmap) in zip(axes, panels):
         if cmap is None and img.ndim == 3:
             ax.imshow(img)
         elif cmap is None:
-            ax.imshow(img, vmin=vmin, vmax=vmax)
+            # Special handling for mask panel: use fixed [0,1] range
+            if title == "Pred Mask (prob)":
+                ax.imshow(img, vmin=0, vmax=1)
+            else:
+                ax.imshow(img, vmin=vmin, vmax=vmax)
         else:
             ax.imshow(img, cmap=cmap, vmin=0, vmax=err_max)
         ax.set_title(title, fontsize=11)
@@ -337,7 +342,7 @@ def main():
             with torch.no_grad():
                 save_viz(
                     vis_dir / f"iter_{it:05d}.png",
-                    rgb_tensor, depth_input, depth_pred, gt_depth_tensor, sensor_mask_tensor, gt_mask_tensor,
+                    rgb_tensor, depth_input, depth_pred, gt_depth_tensor, sensor_mask_tensor, gt_mask_tensor, mask_logit,
                     alpha, beta, loss_val, it,
                 )
 

@@ -165,7 +165,7 @@ axes[1, 0].set_title('GT Depth (mm)')
 axes[1, 0].axis('off')
 
 axes[1, 1].imshow(sample['gt_mask'][0].numpy(), cmap='gray')
-axes[1, 1].set_title('GT Mask (300-8333mm)')
+axes[1, 1].set_title('GT Mask (300-20000mm)')
 axes[1, 1].axis('off')
 
 axes[1, 2].imshow(sample['sensor_mask'][0].numpy(), cmap='gray')

@@ -97,10 +97,10 @@ def split_by_frame(samples, val_fraction=0.05):
 
 
 def split_train_stages(samples):
-    """Split training samples into two bands: 0-50% and 50-100% frame bands."""
+    """Split training samples into two 50% frame bands."""
     n = len(samples)
-    b1 = n // 2
-    return [samples[:b1], samples[b1:]]
+    mid = n // 2
+    return [samples[:mid], samples[mid:]]
 
 
 def load_sample(color_path: str, depth_path: str):
@@ -306,7 +306,7 @@ def get_dataloaders(
 if __name__ == "__main__":
     # Quick test - use relative path or env var
     import os
-    scenes_root = os.environ.get("HYPERSIM_ROOT", str(Path.home() / "ml-hypersim" / "evermotion_dataset" / "scenes"))
+    scenes_root = os.environ.get("HYPERSIM_ROOT", "../../ml-hypersim/evermotion_dataset/scenes")
     ds = HypersimDataset(
         scenes_root,
         stage=1,
